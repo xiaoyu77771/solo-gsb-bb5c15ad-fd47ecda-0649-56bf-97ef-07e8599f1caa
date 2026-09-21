@@ -173,6 +173,23 @@
           </div>
         </div>
       </section>
+
+      <section class="card" id="duplexCard">
+        <h2>双面印刷版预览</h2>
+        <p class="hint">全部折叠合法并收成单叠后，把当前纸格标注展开为<b>正面版 / 背面版</b>两张
+          印刷版：背面版按所选翻转边镜像摆位、格内页码按面片朝向旋转。打印后沿同一翻转边
+          翻面并按既有步骤折叠，阅读顺序即与当前回放一致。</p>
+        <div class="row">
+          <label>翻转边
+            <select id="duplexFlip">
+              <option value="long">长边翻转</option>
+              <option value="short">短边翻转</option>
+            </select>
+          </label>
+          <button id="duplexOpenBtn" class="primary" disabled>生成预览</button>
+        </div>
+        <div id="duplexStatus" class="hint"></div>
+      </section>
     </aside>
   </main>
 
@@ -187,6 +204,22 @@
       </div>
     </div>
   </div>
+
+  <!-- 双面印刷版预览弹层 -->
+  <div id="duplexModal" class="modal" hidden>
+    <div class="modal-body duplex-modal">
+      <h3>双面印刷版预览 <small id="duplexFlipInfo"></small></h3>
+      <div id="duplexSummary" class="hint duplex-summary"></div>
+      <div id="duplexPlates" class="duplex-plates"></div>
+      <div class="row right">
+        <button id="duplexCloseBtn">关闭</button>
+        <button id="duplexPrintBtn" class="primary">打印（两版各占一页）</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 打印专用根节点：仅打印时显示，两版各占一页 -->
+  <div id="duplexPrintRoot" aria-hidden="true"></div>
 
   <script src="foldEngine.js"></script>
   <script src="app.js"></script>

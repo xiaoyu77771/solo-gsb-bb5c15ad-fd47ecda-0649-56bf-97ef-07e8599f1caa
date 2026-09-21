@@ -241,6 +241,54 @@ button.fold { flex: 1 1 40%; min-width: 110px; font-weight: 600; }
 .path-step-list { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.7; color: var(--ink); }
 .path-step-list li { font-variant-numeric: tabular-nums; }
 
+/* ---------- 双面印刷版预览 ---------- */
+.duplex-status-err { color: var(--danger); }
+.duplex-status-ok { color: var(--ok); }
+.duplex-modal { width: auto; max-width: 94vw; max-height: 90vh; overflow: auto; }
+.duplex-summary { margin-bottom: 4px; }
+.duplex-plates { --dc-size: 68px; display: flex; gap: 18px; flex-wrap: wrap; margin: 10px 0 14px; }
+.duplex-plate-title { font-size: 13px; font-weight: 700; color: #102a5c; margin-bottom: 6px; }
+.duplex-grid { display: grid; gap: 6px; }
+.duplex-cell {
+  width: var(--dc-size, 68px);
+  height: var(--dc-size, 68px);
+  border: 1.2px solid var(--paper-edge);
+  border-radius: 6px;
+  background: var(--paper);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 2px;
+}
+.duplex-cell.blank { border-style: dashed; background: #f7f8fa; }
+.dc-meta { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.dc-page { font-size: 20px; font-weight: 700; line-height: 1.2; color: var(--ink); }
+.dc-page.rot180 { transform: rotate(180deg); }
+.dc-blank { font-size: 12px; font-weight: 400; color: var(--muted); }
+.dc-rot { font-size: 9px; color: var(--muted); white-space: nowrap; }
+.dc-rot.inverted { color: var(--danger); font-weight: 700; }
+
+/* 打印：只输出印刷版（隐藏全部编辑控件），正面版 / 背面版各占一页 */
+#duplexPrintRoot { display: none; }
+.print-plate h2 { font-size: 16px; margin: 0 0 4px; }
+.print-plate p { font-size: 11px; color: #444; margin: 0 0 10px; }
+.print-plate .duplex-grid { gap: 4px; }
+.print-plate .dc-page { font-size: 14px; }
+.print-plate .dc-meta, .print-plate .dc-rot { font-size: 7px; }
+
+@media print {
+  @page { margin: 12mm; }
+  .topbar, .layout, .modal { display: none !important; }
+  #duplexPrintRoot { display: block !important; }
+  #duplexPrintRoot .print-plate { break-after: page; page-break-after: always; }
+  #duplexPrintRoot .print-plate:last-child { break-after: auto; page-break-after: auto; }
+  #duplexPrintRoot .duplex-cell {
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+}
+
 @media (max-width: 1100px) {
   .layout { grid-template-columns: 1fr; }
 }

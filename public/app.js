@@ -17,7 +17,8 @@ const app = {
   editingCell: null,
   playTimer: null,
   imposition: { eligible: null, result: null, sig: null },  // 自动拼版状态
-  pathfind: { result: null, sig: null, gridKey: null }       // 折手自动寻路状态
+  pathfind: { result: null, sig: null, gridKey: null },     // 折手自动寻路状态
+  duplex: { result: null, sig: null }                       // 双面印刷版预览状态
 };
 
 const $ = (id) => document.getElementById(id);
@@ -61,6 +62,13 @@ function init() {
   $('imposeCount').addEventListener('input', renderImposition);
 
   $('pathSearchBtn').addEventListener('click', runPathfind);
+
+  $('duplexOpenBtn').addEventListener('click', openDuplex);
+  $('duplexCloseBtn').addEventListener('click', closeDuplex);
+  $('duplexPrintBtn').addEventListener('click', printDuplex);
+  $('duplexFlip').addEventListener('change', () => {
+    if (app.duplex.result) openDuplex();   // 预览已打开时按新翻转边即时重算
+  });
 
   canvas.addEventListener('click', onCanvasClick);
   canvas.addEventListener('mousemove', onCanvasMove);
@@ -151,6 +159,7 @@ function flashConflict(err) {
   renderSteps();
   renderImposition();
   renderPathfind();
+  renderDuplex();
 }
 
 function truncateSteps() {
@@ -197,6 +206,7 @@ function render() {
   renderControls();
   renderImposition();
   renderPathfind();
+  renderDuplex();
 }
 
 function renderControls() {
@@ -955,6 +965,135 @@ function appendPathSolution(sol) {
   $('saveMsg').textContent = '已把自动寻路方案追加到当前步骤，可继续编辑或保存。';
 }
 
+// ---------- 双面印刷版预览 ----------
+/**
+ * 预览基于“方案全部步骤合法回放且收成单叠”的同一前置（与自动拼版一致）；
+ * 方案几何（网格/标注/步骤）变化后，已打开的预览即作废并关闭。
+ */
+function renderDuplex() {
+  const btn = $('duplexOpenBtn');
+  const status = $('duplexStatus');
+  if (!app.plan.rows) {
+    app.duplex.result = null;
+    app.duplex.sig = null;
+    btn.disabled = true;
+    status.className = 'hint';
+    status.textContent = '先在左侧创建行列纸格并完成折叠。';
+    $('duplexModal').hidden = true;
+    return;
+  }
+  const elig = E.impositionEligibility(
+    app.plan.rows, app.plan.cols, app.plan.labels, app.plan.steps);
+  if (elig.ok) {
+    btn.disabled = false;
+    status.className = 'hint duplex-status-ok';
+    status.textContent =
+      `可生成双面印刷版：${app.plan.rows}×${app.plan.cols} 格 × 正反 2 面，阅读顺序已确定。`;
+  } else {
+    btn.disabled = true;
+    status.className = 'hint duplex-status-err';
+    const msg = elig.message.replace('无法自动拼版', '无法生成双面印刷版预览');
+    status.textContent = elig.code === 'not_single_stack'
+      ? `未收成单叠：${msg}`
+      : `禁用预览：${msg}`;
+  }
+  // 旧预览的方案已被改动 → 作废并关闭弹层
+  if (app.duplex.result && app.duplex.sig !== planSignature()) closeDuplex();
+}
+
+function closeDuplex() {
+  app.duplex.result = null;
+  app.duplex.sig = null;
+  $('duplexModal').hidden = true;
+}
+
+/** 点击“生成预览”：仅计算并展示，不改动任何方案数据。 */
+function openDuplex() {
+  if (!app.plan.rows) return;
+  const flip = $('duplexFlip').value === 'short' ? 'short' : 'long';
+  const result = E.duplexPreview(
+    app.plan.rows, app.plan.cols, app.plan.labels, app.plan.steps, flip);
+  if (!result.ok) {
+    closeDuplex();
+    $('duplexStatus').className = 'hint duplex-status-err';
+    $('duplexStatus').textContent = '禁用预览：' + result.message;
+    return;
+  }
+  app.duplex.result = result;
+  app.duplex.sig = planSignature();
+  renderDuplexPreview(result);
+  $('duplexModal').hidden = false;
+}
+
+function printDuplex() {
+  if (!app.duplex.result) return;
+  if (typeof window !== 'undefined' && typeof window.print === 'function') window.print();
+}
+
+function duplexAxisText(r) {
+  return r.axis === 'v' ? '左右镜像' : '上下镜像';
+}
+
+/** 单个纸格：标出原始纸格、面别、页码与旋转方向；空白面保留占位。 */
+function duplexCellHtml(c) {
+  const faceName = c.face === 'front' ? '正面' : '反面';
+  const rotText = c.rotation ? '⟲ 旋转180°' : '正立 0°';
+  const page = c.blank
+    ? '<span class="dc-blank">空白</span>'
+    : escapeHtml(c.label);
+  return `<div class="duplex-cell${c.blank ? ' blank' : ''}" title="原格(${c.origin}) ${faceName}">` +
+    `<div class="dc-meta">原格(${c.origin})·${faceName}</div>` +
+    `<div class="dc-page${c.rotation ? ' rot180' : ''}">${page}</div>` +
+    `<div class="dc-rot${c.rotation ? ' inverted' : ''}">${rotText}</div>` +
+    `</div>`;
+}
+
+function duplexPlateHtml(r, face) {
+  const isFront = face === 'front';
+  const cells = isFront ? r.front : r.back;
+  const title = isFront
+    ? '正面版 · 印于纸张正面'
+    : `背面版 · 印于纸张背面（${duplexAxisText(r)}）`;
+  return `<div class="duplex-plate">` +
+    `<div class="duplex-plate-title">${title}</div>` +
+    `<div class="duplex-grid" style="grid-template-columns: repeat(${r.cols}, var(--dc-size));">` +
+    cells.map(duplexCellHtml).join('') +
+    `</div></div>`;
+}
+
+/** 打印版：随 #duplexPrintRoot 只在打印时显示，两块 print-plate 各占一页。 */
+function duplexPrintPlateHtml(r, face) {
+  const isFront = face === 'front';
+  const cells = isFront ? r.front : r.back;
+  const flipName = r.flipMode === 'long' ? '长边翻转' : '短边翻转';
+  const title = isFront ? '正面版' : '背面版';
+  const sub = isFront
+    ? `印于纸张正面，页码正立。双面打印请选择“${flipName}”。`
+    : `印于纸张背面：按${flipName}${duplexAxisText(r)}摆位，格内页码${r.rotation ? '已旋转 180°' : '正立'}。`;
+  // 打印纸格尺寸随版面和网格规模自适应，尽量占满一页
+  const size = Math.max(30, Math.min(64, Math.floor(680 / r.cols), Math.floor(900 / r.rows)));
+  return `<div class="print-plate">` +
+    `<h2>${escapeHtml(app.plan.name || '未命名方案')} · ${title}</h2>` +
+    `<p>${sub}</p>` +
+    `<div class="duplex-grid" style="--dc-size:${size}px; grid-template-columns: repeat(${r.cols}, ${size}px);">` +
+    cells.map(duplexCellHtml).join('') +
+    `</div></div>`;
+}
+
+function renderDuplexPreview(r) {
+  const flipName = r.flipMode === 'long' ? '长边翻转' : '短边翻转';
+  const rotName = r.rotation ? '页码旋转 180°' : '页码正立';
+  $('duplexFlipInfo').textContent = `${flipName} · 背面版${duplexAxisText(r)}`;
+  const seq = r.sequence.map((s) => (s == null ? '空白' : escapeHtml(s))).join(' → ');
+  $('duplexSummary').innerHTML =
+    `按<b>${flipName}</b>生成：正面版按原格摆放、页码正立；背面版${duplexAxisText(r)}、${rotName}；` +
+    `空白面保留占位。打印时在打印机上选择相同的<b>${flipName}</b>双面模式，沿该边翻面并按既有步骤折叠后，` +
+    `阅读顺序即与当前回放一致：<b>${seq}</b>`;
+  $('duplexPlates').innerHTML = duplexPlateHtml(r, 'front') + duplexPlateHtml(r, 'back');
+  $('duplexPrintRoot').innerHTML =
+    duplexPrintPlateHtml(r, 'front') + duplexPrintPlateHtml(r, 'back');
+}
+
 // ---------- 错误提示 ----------
 function showFoldError(err) {
   const box = $('foldError');
@@ -1079,6 +1218,7 @@ if (typeof window !== 'undefined') {
   window.__foldApp = Object.assign(app, {
     requestStep, setUpto, createGrid, render, getFoldError: () => $('foldError'),
     previewImposition, confirmImposition, closeImposition, renderImposition,
-    readImposeInputs, runPathfind, doPathfindSearch, appendPathSolution, renderPathfind
+    readImposeInputs, runPathfind, doPathfindSearch, appendPathSolution, renderPathfind,
+    openDuplex, closeDuplex, renderDuplex, printDuplex
   });
 }

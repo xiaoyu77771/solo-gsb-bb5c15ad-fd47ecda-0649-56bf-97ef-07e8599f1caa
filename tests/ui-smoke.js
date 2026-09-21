@@ -53,7 +53,9 @@ const ids = ['rowsInput', 'colsInput', 'createGridBtn', 'axisSelect', 'lineSelec
   'cellEditor', 'editorOrigin', 'editorRows', 'editorCancel', 'editorOk', 'planName',
   'imposeStart', 'imposeCount', 'imposePreviewBtn', 'imposeStatus', 'imposePreview',
   'imposeSummary', 'imposeOverwrite', 'imposeRows', 'imposeCancelBtn', 'imposeConfirmBtn',
-  'pathCell', 'pathFace', 'pathSearchBtn', 'pathStatus', 'pathResults'];
+  'pathCell', 'pathFace', 'pathSearchBtn', 'pathStatus', 'pathResults',
+  'duplexFlip', 'duplexOpenBtn', 'duplexStatus', 'duplexModal', 'duplexFlipInfo',
+  'duplexSummary', 'duplexPlates', 'duplexCloseBtn', 'duplexPrintBtn', 'duplexPrintRoot'];
 const els = Object.fromEntries(ids.map((id) => [id, makeEl(id)]));
 els.rowsInput.value = '2';
 els.colsInput.value = '2';
@@ -267,5 +269,67 @@ ui.plan.steps.push({ axis: 'v', line: 2, dir: 'l' });
 ui.renderPathfind();
 assert.equal(els.pathSearchBtn.disabled, true);
 assert.ok(/非法/.test(els.pathStatus.textContent));
+
+// ---------- 双面印刷版预览 ----------
+// 干净 2×2 无步骤：未收成单叠 → 生成按钮禁用并说明原因
+els.rowsInput.value = '2'; els.colsInput.value = '2';
+els.createGridBtn.dispatch('click');
+ui.plan.labels = {
+  '0,0': { front: '4', back: '5' }, '1,0': { front: '6', back: '3' },
+  '0,1': { front: '8', back: '1' }, '1,1': { front: '7', back: '2' }
+};
+ui.render();
+assert.equal(els.duplexOpenBtn.disabled, true);
+assert.ok(els.duplexStatus.textContent.includes('未收成单叠'));
+
+// 折成单叠后可用：长边翻转（方形 → 竖直边）生成正/背面版
+ui.requestStep({ axis: 'v', line: 1, dir: 'r' });
+ui.requestStep({ axis: 'h', line: 1, dir: 'd' });
+assert.equal(els.duplexOpenBtn.disabled, false);
+els.duplexFlip.value = 'long';
+els.duplexOpenBtn.dispatch('click');
+assert.equal(els.duplexModal.hidden, false);
+assert.ok(ui.duplex.result && ui.duplex.result.ok);
+assert.equal(ui.duplex.result.axis, 'v');
+assert.ok(els.duplexPlates.textContent.includes('正面版'));
+assert.ok(els.duplexPlates.textContent.includes('背面版'));
+assert.ok(els.duplexPlates.textContent.includes('原格(0,0)'));
+assert.ok(els.duplexPlates.textContent.includes('正面'));
+assert.ok(els.duplexPlates.textContent.includes('反面'));
+assert.ok(els.duplexPlates.textContent.includes('正立'));
+assert.ok(!els.duplexPlates.textContent.includes('旋转180°'), '长边翻转页码不旋转');
+// 背面版左右镜像：原格(0,0) 的反面 5 落在 (1,0)
+const backCell = ui.duplex.result.back.find((c) => c.origin === '0,0');
+assert.equal(backCell.px, 1);
+assert.equal(backCell.label, '5');
+// 打印根已同步两版，打印按钮可用（桩中无 window.print，调用不抛错即可）
+assert.ok(els.duplexPrintRoot.textContent.includes('正面版'));
+assert.ok(els.duplexPrintRoot.textContent.includes('背面版'));
+ui.printDuplex();
+
+// 切换短边翻转：预览即时重算，背面版上下镜像、页码旋转 180°
+els.duplexFlip.value = 'short';
+els.duplexFlip.dispatch('change');
+assert.equal(ui.duplex.result.axis, 'h');
+assert.ok(els.duplexPlates.textContent.includes('旋转180°'));
+const backCell2 = ui.duplex.result.back.find((c) => c.origin === '0,0');
+assert.equal(backCell2.py, 1);
+assert.equal(backCell2.rotation, 180);
+
+// 空白面保留占位
+ui.plan.labels = {};
+ui.render();
+els.duplexOpenBtn.dispatch('click');
+assert.ok(els.duplexPlates.textContent.includes('空白'));
+
+// 方案被改动（含非法折叠）→ 预览作废关闭，生成禁用并说明原因
+ui.plan.steps.push({ axis: 'h', line: 1, dir: 'd' });   // 单叠后再折：非法
+ui.render();
+assert.equal(els.duplexModal.hidden, true, '方案变化后预览弹层应关闭');
+assert.equal(els.duplexOpenBtn.disabled, true);
+assert.ok(els.duplexStatus.textContent.includes('非法折叠'));
+ui.plan.steps.pop();
+ui.render();
+assert.equal(els.duplexOpenBtn.disabled, false);
 
 console.log('前端冒烟流程全部通过');

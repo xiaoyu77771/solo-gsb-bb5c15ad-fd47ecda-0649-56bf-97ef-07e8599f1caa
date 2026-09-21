@@ -133,6 +133,96 @@ test('自动拼版标签经保存/载入往返后完整保留', async () => {
   assert.deepEqual(loaded.labels['0,0'], { front: '4', back: '1' });
 });
 
+// ---------- 双面印刷版预览 ----------
+test('POST /api/duplex：长边翻转返回正/背面版，背面左右镜像、页码正立', async () => {
+  const { status, json } = await post('/api/duplex', {
+    rows: 2, cols: 2,
+    labels: {
+      '0,0': { front: '4', back: '5' }, '1,0': { front: '6', back: '3' },
+      '0,1': { front: '8', back: '1' }, '1,1': { front: '7', back: '2' }
+    },
+    steps: STEPS, flipMode: 'long'
+  });
+  assert.equal(status, 200);
+  assert.equal(json.ok, true);
+  assert.equal(json.axis, 'v');
+  assert.equal(json.rotation, 0);
+  assert.equal(json.front.length, 4);
+  assert.equal(json.back.length, 4);
+  // 原格(0,0) 正面 4 在正面版原位、正立
+  const f = json.front.find((c) => c.origin === '0,0');
+  assert.equal(f.px, 0); assert.equal(f.py, 0);
+  assert.equal(f.label, '4');
+  assert.equal(f.rotation, 0);
+  // 原格(0,0) 反面 5 在背面版左右镜像位 (1,0)、正立
+  const b = json.back.find((c) => c.origin === '0,0');
+  assert.equal(b.px, 1); assert.equal(b.py, 0);
+  assert.equal(b.label, '5');
+  assert.equal(b.rotation, 0);
+  // 阅读顺序与 /api/simulate 回放一致
+  const sim = await post('/api/simulate', {
+    rows: 2, cols: 2,
+    labels: {
+      '0,0': { front: '4', back: '5' }, '1,0': { front: '6', back: '3' },
+      '0,1': { front: '8', back: '1' }, '1,1': { front: '7', back: '2' }
+    },
+    steps: STEPS
+  });
+  assert.deepEqual(json.sequence, sim.json.stacks[0].sequence);
+});
+
+test('POST /api/duplex：短边翻转背面上下镜像且页码旋转 180°，空白面保留占位', async () => {
+  const { json } = await post('/api/duplex', {
+    rows: 2, cols: 2, labels: { '0,0': { front: '4', back: '5' } },
+    steps: STEPS, flipMode: 'short'
+  });
+  assert.equal(json.ok, true);
+  assert.equal(json.axis, 'h');
+  assert.equal(json.rotation, 180);
+  const b = json.back.find((c) => c.origin === '0,0');
+  assert.equal(b.px, 0); assert.equal(b.py, 1);
+  assert.equal(b.label, '5');
+  assert.equal(b.rotation, 180);
+  // 未标注的面：空白占位
+  const blanks = json.back.filter((c) => c.blank);
+  assert.equal(blanks.length, 3);
+  assert.ok(blanks.every((c) => c.label === null));
+  assert.equal(json.front.filter((c) => c.blank).length, 3);
+});
+
+test('POST /api/duplex：非法折叠 / 未收成单叠 / 非法翻转边均返回具体原因', async () => {
+  let r = await post('/api/duplex', {
+    rows: 1, cols: 3, labels: {},
+    steps: [
+      { axis: 'v', line: 1, dir: 'r' },
+      { axis: 'v', line: 2, dir: 'l' }
+    ],
+    flipMode: 'long'
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.error.code, 'thickness');
+  assert.equal(r.json.error.stepIndex, 1);
+
+  r = await post('/api/duplex', {
+    rows: 2, cols: 3, labels: {},
+    steps: [{ axis: 'v', line: 1, dir: 'r' }],
+    flipMode: 'long'
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.error.code, 'not_single_stack');
+  assert.equal(r.json.error.stackCount, 4);
+
+  r = await post('/api/duplex', {
+    rows: 2, cols: 2, labels: {}, steps: STEPS, flipMode: 'sideways'
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.error.code, 'bad_flip');
+
+  r = await post('/api/duplex', { rows: 2, cols: 2, steps: [{ axis: 'z' }], flipMode: 'long' });
+  assert.equal(r.status, 400);
+  assert.equal(r.json.error.code, 'bad_plan');
+});
+
 // ---------- 折手自动寻路 ----------
 test('POST /api/find-path：2×2 反面封面返回等长最短方案（≤3 条）', async () => {
   const r = await post('/api/find-path', {

@@ -451,6 +451,93 @@ function impositionOverwrite(labels, result) {
 }
 
 /**
+ * 双面印刷版预览
+ * --------------
+ * 仅当方案“全部步骤合法回放且收成单叠”时可用（与自动拼版同一前置，
+ * 非法折叠 / 未收成单叠时返回对应错误码，由界面禁用并说明原因）。
+ * 把当前纸格标注展开为两张可双面打印的印刷版：
+ *
+ *   正面版：各原始纸格的正面页码按原位摆放，页码正立（rotation 0）；
+ *   背面版：各原始纸格的反面页码按所选翻转边镜像摆位，格内页码再按
+ *          面片朝向约定旋转；空白面保留占位（label:null, blank:true）。
+ *
+ * 朝向约定（与引擎印刷约定一致）：正反面字形的“下”方向都随面片标架
+ * frame.y —— 即书页式排版。沿所选边翻面时：
+ *   - 绕竖直边翻：纸张上下不变 → 背面纸格左右镜像（x → cols-1-x），
+ *     格内页码正立（rotation 0）；
+ *   - 绕水平边翻：纸张上下颠倒 → 背面纸格上下镜像（y → rows-1-y），
+ *     格内页码须旋转 180°。
+ * 长边翻转 = 绕纸格长边翻面（高 ≥ 宽时长边竖直，宽于高时水平，方形按竖直
+ * 书页式处理）；短边翻转 = 绕短边翻面。两种翻转边展开的是同一张物理印张：
+ * 打印后沿所选边翻面、按既有步骤折叠，阅读顺序与当前回放一致
+ * （sequence 字段即该顺序，供核对）。
+ *
+ * @returns 成功 { ok:true, flipMode, axis:'v'|'h', rotation, rows, cols, capacity,
+ *   front:[{px,py,origin,face:'front',label,blank,rotation:0}],
+ *   back:[{px,py,origin,face:'back',label,blank,rotation}],
+ *   sequence:[...] }
+ * 失败 { ok:false, code, message, ... }（code 同 impositionEligibility，
+ * 另有 bad_flip 表示翻转方式非法）
+ */
+function duplexPreview(rows, cols, labels, steps, flipMode) {
+  const elig = impositionEligibility(rows, cols, labels, steps);
+  if (!elig.ok) {
+    const out = {
+      ok: false,
+      code: elig.code,
+      message: elig.message.replace('无法自动拼版', '无法生成双面印刷版预览'),
+      capacity: elig.capacity
+    };
+    if (elig.stepIndex != null) out.stepIndex = elig.stepIndex;
+    if (elig.conflicts) out.conflicts = elig.conflicts;
+    if (elig.stackCount != null) out.stackCount = elig.stackCount;
+    return out;
+  }
+  if (flipMode !== 'long' && flipMode !== 'short') {
+    return {
+      ok: false,
+      code: 'bad_flip',
+      message: "翻转方式须为 'long'（长边翻转）或 'short'（短边翻转）。",
+      capacity: elig.capacity
+    };
+  }
+  rows = elig.state.rows;
+  cols = elig.state.cols;
+  // 长边：纸格较长的一侧；宽于高时长边水平，否则（高 ≥ 宽）长边竖直
+  const longAxis = cols > rows ? 'h' : 'v';
+  const axis = flipMode === 'long' ? longAxis : (longAxis === 'v' ? 'h' : 'v');
+  const rotation = axis === 'v' ? 0 : 180;
+  const mirror = (x, y) => (axis === 'v' ? { x: cols - 1 - x, y } : { x, y: rows - 1 - y });
+
+  const front = [];
+  const back = [];
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const id = key(x, y);
+      const lab = (labels && labels[id]) || {};
+      const f = lab.front != null ? String(lab.front) : '';
+      const b = lab.back != null ? String(lab.back) : '';
+      front.push({ px: x, py: y, origin: id, face: 'front', label: f === '' ? null : f, blank: f === '', rotation: 0 });
+      const m = mirror(x, y);
+      back.push({ px: m.x, py: m.y, origin: id, face: 'back', label: b === '' ? null : b, blank: b === '', rotation });
+    }
+  }
+  back.sort((a, b2) => a.py - b2.py || a.px - b2.px);
+  return {
+    ok: true,
+    flipMode,
+    axis,
+    rotation,
+    rows,
+    cols,
+    capacity: elig.capacity,
+    front,
+    back,
+    sequence: elig.info.stacks[0].sequence
+  };
+}
+
+/**
  * 折手自动寻路
  * ------------
  * 从给定方案“全部步骤合法回放后的末态”出发，枚举当前引擎允许的折叠
@@ -717,6 +804,7 @@ const api = {
   initialState, cloneState, validateFold, applyFold,
   replay, visibleFace, pageSequence, normalizePlan, key,
   impositionEligibility, autoImpose, impositionOverwrite,
+  duplexPreview,
   findFoldPath, candidateSteps, stateKey, describeStep
 };
 

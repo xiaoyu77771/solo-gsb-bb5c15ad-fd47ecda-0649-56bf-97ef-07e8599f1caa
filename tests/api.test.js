@@ -133,6 +133,76 @@ test('自动拼版标签经保存/载入往返后完整保留', async () => {
   assert.deepEqual(loaded.labels['0,0'], { front: '4', back: '1' });
 });
 
+// ---------- 双面印刷版预览 ----------
+test('POST /api/duplex-plate：长边版返回正面/背面两版与镜像旋转数据', async () => {
+  const r = await post('/api/duplex-plate', {
+    rows: 2, cols: 2, labels: {}, steps: STEPS, flip: 'long'
+  });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.flip, 'long');
+  assert.equal(r.json.flipAxis, 'vertical');
+  assert.deepEqual(r.json.front.grid.map((row) => row.map((c) => c.origin)),
+    [['0,0', '1,0'], ['0,1', '1,1']]);
+  assert.deepEqual(r.json.back.grid.map((row) => row.map((c) => c.origin)),
+    [['1,0', '0,0'], ['1,1', '0,1']]);
+  const all = r.json.front.grid.flat().concat(r.json.back.grid.flat());
+  assert.equal(all.length, 8);
+  assert.ok(all.every((c) => c.rotate === 0 || c.rotate === 180));
+  assert.ok(all.every((c) => /^\d+,\d+$/.test(c.origin)));
+});
+
+test('POST /api/duplex-plate：短边版上下镜像、翻面边为横边', async () => {
+  const r = await post('/api/duplex-plate', {
+    rows: 2, cols: 2, labels: {}, steps: STEPS, flip: 'short'
+  });
+  assert.equal(r.json.ok, true);
+  assert.equal(r.json.flipAxis, 'horizontal');
+  assert.deepEqual(r.json.back.grid.map((row) => row.map((c) => c.origin)),
+    [['0,1', '1,1'], ['0,0', '1,0']]);
+  assert.equal(r.json.front.edge, 'top');
+  assert.equal(r.json.back.edge, 'bottom');
+});
+
+test('POST /api/duplex-plate：未收成单叠 / 非法折叠 / 非法翻面返回具体原因', async () => {
+  let r = await post('/api/duplex-plate', {
+    rows: 2, cols: 3, labels: {},
+    steps: [{ axis: 'v', line: 1, dir: 'r' }], flip: 'long'
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.error.code, 'not_single_stack');
+
+  r = await post('/api/duplex-plate', {
+    rows: 1, cols: 3, labels: {},
+    steps: [
+      { axis: 'v', line: 1, dir: 'r' },
+      { axis: 'v', line: 2, dir: 'l' }
+    ],
+    flip: 'long'
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.error.code, 'thickness');
+  assert.equal(r.json.error.stepIndex, 1);
+
+  r = await post('/api/duplex-plate', {
+    rows: 2, cols: 2, labels: {}, steps: STEPS, flip: 'weird'
+  });
+  assert.equal(r.json.ok, false);
+  assert.equal(r.json.error.code, 'bad_flip');
+});
+
+test('POST /api/duplex-plate：空白面以 blank 占位返回', async () => {
+  const r = await post('/api/duplex-plate', {
+    rows: 2, cols: 2,
+    labels: { '0,0': { front: '', back: '' } },
+    steps: STEPS, flip: 'long'
+  });
+  assert.equal(r.status, 200);
+  const blank = r.json.front.grid.flat().find((c) => c.origin === '0,0');
+  assert.equal(blank.blank, true);
+  assert.equal(blank.label, null);
+});
+
 // ---------- 折手自动寻路 ----------
 test('POST /api/find-path：2×2 反面封面返回等长最短方案（≤3 条）', async () => {
   const r = await post('/api/find-path', {

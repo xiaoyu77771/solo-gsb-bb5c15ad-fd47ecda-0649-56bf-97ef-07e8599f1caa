@@ -77,7 +77,29 @@ docker compose down
      达到时间上限仍未确认时提示“**搜索超限**”；
    - 当前方案含非法折叠、或网格超过 4×4 时，搜索按钮禁用并给出原因；
      搜索本身不改动当前步骤，只有手动“追加”才会写入。
-8. **保存 / 载入**：
+8. **双面印刷版预览**：右侧“双面印刷版预览”卡片中选择翻面方式，点击“生成双面版预览”：
+   - **长边翻转**（沿纸张竖边左右翻面，常规骑马钉/侧边装订）或
+     **短边翻转**（沿纸张横边上下翻面，tumble/台历式翻页）；
+   - 系统并排生成**正面版（第 1 印刷面）与背面版（第 2 印刷面）**：
+     正面版纸格按原始行列排列；背面版纸格按所选翻转边**镜像**
+     （长边=左右镜像，短边=上下镜像），格内页码再依据该面片在折叠末态的
+     朝向（`frame.y`）做 **180° 倒置补偿旋转**——打印后沿所选边翻面、再按
+     既有步骤折叠时，所有页码正立出现，阅读顺序与当前回放一致；
+   - 每个纸格标出**原始纸格坐标**（列,行，0 基）、**面别**（正面/反面）、
+     **页码**与**旋转方向**（`0° 不转` / `⟲ 旋转 180°`，仅字形旋转），
+     空白面以斜纹底纹保留“空白面（占位）”；版头下方彩条标出翻面装订边；
+   - 预览为只读，不改写当前标注；方案被改动时预览即时重算，变得非法或
+     不再是单叠时自动关闭；
+   - **非法折叠、尚未收成单叠或未创建网格时按钮禁用**，下方红字说明具体原因。
+   - **打印设置**：预览覆盖层中点“**打印 / 另存 PDF**”（或浏览器 `Ctrl/Cmd+P`）：
+     - 目标：实际双面打印机选“**双面打印 / 双面沿长边翻页**”或
+       “**双面沿短边翻页（翻转）**”，须与卡片中选择的翻面方式一致；
+       无双面打印机时先打印正面版，再按提示的翻面边手工翻纸打印背面版；
+     - 缩放：**100%（实际大小）**，关闭“适应页面边框”外的额外缩放，
+       纸张 A4（或与纸格比例相近的横向纸）；
+     - 应用已内置打印样式：**自动隐藏全部编辑控件，正面版、背面版各占一页**
+       （A4 横版），无需在打印对话框中再做隐藏设置。
+9. **保存 / 载入**：
    - “保存到服务器”将方案 JSON 存入容器数据卷，可通过“已存方案…”再次载入；
    - “导出 JSON / 导入 JSON”在本地文件与应用之间交换方案。
 
@@ -120,15 +142,16 @@ docker compose down
 ## 目录结构
 
 ```
-server.js              Express 服务：静态托管 + /api/simulate + /api/impose + /api/find-path + 方案持久化
+server.js              Express 服务：静态托管 + /api/simulate + /api/impose + /api/duplex-plate + /api/find-path + 方案持久化
 entrypoint.sh          容器启动入口（依赖自检/安装、初始化、启动）
 public/
   index.html           页面结构
-  styles.css           样式
+  styles.css           样式（含双面版打印样式 @media print）
   foldEngine.js        折叠模拟引擎（浏览器与服务端共用）
-  app.js               Canvas 渲染、交互、回放、存取
+  app.js               Canvas 渲染、交互、回放、存取、双面印刷版预览
 tests/engine.test.js   引擎单元测试（node --test）
 tests/imposition.test.js 自动拼版单元测试
+tests/duplex.test.js   双面印刷版（镜像、制版旋转、前置条件）单元测试
 tests/pathfind.test.js 折手自动寻路（BFS、状态键、无解/超限）单元测试
 tests/api.test.js      /api/impose、/api/find-path、/api/simulate 与方案存取的 HTTP 测试
 tests/ui-smoke.js      前端主流程冒烟（DOM 桩中加载 app.js，直接 `node tests/ui-smoke.js` 运行）
@@ -152,6 +175,13 @@ node tests/ui-smoke.js   # 前端主流程冒烟（DOM 桩，独立运行）
 前置条件不满足时返回 `ok:false` 与具体错误码
 （`contour` / `thickness` / `not_single_stack` / `too_many_pages` / `bad_start` / `bad_count`）。
 自动生成的标签就是普通 `labels`，保存、导入导出与 `/api/simulate` 回放均原样保留。
+
+`POST /api/duplex-plate` 在方案 JSON 之外附加 `flip`（`long` 长边翻转 / `short` 短边翻转），
+返回双面印刷版数据：`front` / `back` 两版各含 `edge`（翻面装订边）、`mirrored`（背面版为 true）
+与 `grid`（按视图行列排列），每格给出 `origin`（原始纸格 `列,行`）、`face`（面别）、
+`label`（页码，空白为 `null`）、`blank`、`rotate`（制版旋转 `0` / `180`）与 `upright`；
+背面版格位已按翻转边镜像（长边左右、短边上下）。前置条件不满足时返回 `ok:false`，
+错误码复用 `contour` / `thickness` / `not_single_stack` / `bad_grid`，翻面参数非法为 `bad_flip`。
 
 `POST /api/find-path` 在方案 JSON 之外附加：
 

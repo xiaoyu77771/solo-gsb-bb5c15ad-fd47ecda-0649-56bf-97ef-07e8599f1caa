@@ -17,7 +17,8 @@ const app = {
   editingCell: null,
   playTimer: null,
   imposition: { eligible: null, result: null, sig: null },  // 自动拼版状态
-  pathfind: { result: null, sig: null, gridKey: null }       // 折手自动寻路状态
+  pathfind: { result: null, sig: null, gridKey: null },      // 折手自动寻路状态
+  duplex: { eligible: null, open: false, flip: 'long', result: null, sig: null }  // 双面印刷版
 };
 
 const $ = (id) => document.getElementById(id);
@@ -61,6 +62,20 @@ function init() {
   $('imposeCount').addEventListener('input', renderImposition);
 
   $('pathSearchBtn').addEventListener('click', runPathfind);
+
+  $('duplexOpenBtn').addEventListener('click', openDuplex);
+  $('duplexCloseBtn').addEventListener('click', closeDuplex);
+  $('duplexPrintBtn').addEventListener('click', () => window.print());
+  $('duplexFlip').addEventListener('change', (e) => {
+    app.duplex.flip = e.target.value;
+    $('duplexFlipOverlay').value = e.target.value;
+    renderDuplexPreview();
+  });
+  $('duplexFlipOverlay').addEventListener('change', (e) => {
+    app.duplex.flip = e.target.value;
+    $('duplexFlip').value = e.target.value;
+    renderDuplexPreview();
+  });
 
   canvas.addEventListener('click', onCanvasClick);
   canvas.addEventListener('mousemove', onCanvasMove);
@@ -197,6 +212,7 @@ function render() {
   renderControls();
   renderImposition();
   renderPathfind();
+  renderDuplex();
 }
 
 function renderControls() {
@@ -955,6 +971,147 @@ function appendPathSolution(sol) {
   $('saveMsg').textContent = '已把自动寻路方案追加到当前步骤，可继续编辑或保存。';
 }
 
+// ---------- 双面印刷版预览 ----------
+/** 渲染右侧卡片：可用性、禁用原因。 */
+function renderDuplex() {
+  const btn = $('duplexOpenBtn');
+  const status = $('duplexStatus');
+  if (!app.plan.rows) {
+    app.duplex.eligible = null;
+    btn.disabled = true;
+    status.className = 'hint';
+    status.textContent = '先在左侧创建行列纸格并完成折叠。';
+    syncDuplexOverlay();
+    return;
+  }
+  const elig = E.duplexEligibility(
+    app.plan.rows, app.plan.cols, app.plan.labels, app.plan.steps);
+  app.duplex.eligible = elig;
+  if (elig.ok) {
+    btn.disabled = false;
+    status.className = 'hint duplex-status-ok';
+    status.textContent = `可生成双面版：当前方案合法且已收成单叠（容量 ${elig.capacity} 面）。`;
+  } else {
+    btn.disabled = true;
+    status.className = 'hint duplex-status-err';
+    status.textContent = elig.code === 'not_single_stack'
+      ? `禁用预览：尚未收成单叠（${elig.message}）`
+      : `禁用预览：${elig.message}`;
+  }
+  syncDuplexOverlay();
+}
+
+/** 打开覆盖层并生成两版。 */
+function openDuplex() {
+  if (!app.duplex.eligible || !app.duplex.eligible.ok) return;
+  app.duplex.flip = $('duplexFlip').value === 'short' ? 'short' : 'long';
+  $('duplexFlipOverlay').value = app.duplex.flip;
+  app.duplex.open = true;
+  $('duplexOverlay').hidden = false;
+  renderDuplexPreview();
+}
+
+function closeDuplex() {
+  app.duplex.open = false;
+  $('duplexOverlay').hidden = true;
+  app.duplex.result = null;
+  app.duplex.sig = null;
+}
+
+/**
+ * 覆盖层打开期间方案被改动（回放/编辑/存取都会触发 render）：
+ * 若几何签名变化则即时重算；变得不可用时自动关闭并给出原因。
+ */
+function syncDuplexOverlay() {
+  if (!app.duplex.open) return;
+  if (!app.duplex.eligible || !app.duplex.eligible.ok) {
+    closeDuplex();
+    return;
+  }
+  if (!app.duplex.result || app.duplex.sig !== planSignature()
+      || app.duplex.result.flip !== app.duplex.flip) {
+    renderDuplexPreview();
+  }
+}
+
+/** 依据当前方案与翻面方式生成两版并填充 DOM。 */
+function renderDuplexPreview() {
+  if (!app.duplex.open) return;
+  const result = E.buildDuplexPlates(
+    app.plan.rows, app.plan.cols, app.plan.labels, app.plan.steps, app.duplex.flip);
+  if (!result.ok) { closeDuplex(); return; }
+  app.duplex.result = result;
+  app.duplex.sig = planSignature();
+
+  const flipText = result.flip === 'long'
+    ? '长边翻转：沿纸张<b>竖边</b>左右翻面（打印机选“双面 / 沿长边翻页”）'
+    : '短边翻转：沿纸张<b>横边</b>上下翻面（打印机选“双面 / 沿短边翻页 / 翻转”）';
+  $('duplexScreenNote').innerHTML = flipText;
+
+  const mirrorText = result.flip === 'long' ? '背面版须左右镜像' : '背面版须上下镜像';
+  $('plateFrontMeta').textContent =
+    `${result.rows} 行 × ${result.cols} 列 · 纸格按原始行列位置排列 · 坐标为“列,行”（0 基）`;
+  $('plateBackMeta').textContent =
+    `${result.rows} 行 × ${result.cols} 列 · ${mirrorText} · 坐标为“列,行”（0 基）`;
+
+  renderPlateSheet($('plateFrontSheet'), result.front, result);
+  renderPlateSheet($('plateBackSheet'), result.back, result);
+}
+
+function renderPlateSheet(sheetEl, plate, result) {
+  sheetEl.innerHTML = '';
+  sheetEl.style.gridTemplateColumns = `repeat(${result.cols}, minmax(0, 1fr))`;
+  sheetEl.style.setProperty('--plate-rows', String(result.rows));
+  // 屏幕上行高不指定：交由格内 aspect-ratio:1/1 推出，避免 fr 行在 auto 高度容器中塌陷；
+  // 打印样式改为等分行铺满一页（见 styles.css @media print）。
+
+  for (const row of plate.grid) {
+    for (const c of row) {
+      const cell = document.createElement('div');
+      cell.className = 'plate-cell face-' + c.face + (c.blank ? ' blank-cell' : '');
+      cell.dataset.origin = c.origin;
+      cell.dataset.face = c.face;
+
+      const origin = document.createElement('span');
+      origin.className = 'cell-origin';
+      origin.textContent = `原格(${c.origin})`;
+
+      const face = document.createElement('span');
+      face.className = 'cell-face';
+      face.textContent = c.face === 'front' ? '正面' : '反面';
+
+      const rot = document.createElement('span');
+      rot.className = 'cell-rot ' + (c.rotate ? 'r180' : 'r0');
+      rot.textContent = c.rotate ? '⟲ 旋转 180°' : '0° 不转';
+      rot.title = c.rotate
+        ? '制版时把该面整体旋转 180°（倒置补偿，折叠后阅读正立）'
+        : '制版时保持原朝向';
+
+      const glyph = document.createElement('span');
+      glyph.className = 'glyph' + (c.rotate ? ' rot180' : '') + (c.blank ? ' blank' : '');
+      glyph.textContent = c.blank ? '空白面（占位）' : c.label;
+
+      cell.append(origin, face, glyph, rot);
+      sheetEl.appendChild(cell);
+    }
+  }
+
+  // 翻转边标识（彩条）：长边=竖边，短边=横边；背面在镜像后的对边
+  const edge = document.createElement('div');
+  edge.className = 'flip-edge';
+  const bar = document.createElement('span');
+  bar.className = 'edge-bar' + (result.flip === 'short' ? ' short-edge' : '');
+  const txt = document.createElement('span');
+  const sideName = { left: '左竖边', right: '右竖边', top: '上横边', bottom: '下横边' }[plate.edge];
+  txt.innerHTML = `翻面装订边：<b>${sideName}</b>` +
+    (plate.mirrored
+      ? `（背面视图；该边即印刷后沿之翻面的${result.flip === 'long' ? '长边' : '短边'}）`
+      : `（正面视图；与背面版${result.flip === 'long' ? '左' : '下'}边为同一条${result.flip === 'long' ? '长' : '短'}边）`);
+  edge.append(bar, txt);
+  sheetEl.parentElement?.querySelectorAll('.flip-edge').forEach((n) => n.remove());
+  sheetEl.parentElement?.appendChild(edge);
+}
+
 // ---------- 错误提示 ----------
 function showFoldError(err) {
   const box = $('foldError');
@@ -1079,6 +1236,7 @@ if (typeof window !== 'undefined') {
   window.__foldApp = Object.assign(app, {
     requestStep, setUpto, createGrid, render, getFoldError: () => $('foldError'),
     previewImposition, confirmImposition, closeImposition, renderImposition,
-    readImposeInputs, runPathfind, doPathfindSearch, appendPathSolution, renderPathfind
+    readImposeInputs, runPathfind, doPathfindSearch, appendPathSolution, renderPathfind,
+    openDuplex, closeDuplex, renderDuplex, renderDuplexPreview
   });
 }

@@ -91,6 +91,33 @@ app.post('/api/impose', (req, res) => {
   }
 });
 
+// ---------- 双面印刷版预览 ----------
+app.post('/api/duplex-plate', (req, res) => {
+  try {
+    const plan = E.normalizePlan(req.body || {});
+    const result = E.buildDuplexPlates(
+      plan.rows, plan.cols, plan.labels, plan.steps,
+      req.body && req.body.flip
+    );
+    if (!result.ok) {
+      return res.json({
+        ok: false,
+        error: {
+          code: result.code,
+          message: result.message,
+          capacity: result.capacity,
+          stepIndex: result.stepIndex,
+          conflicts: result.conflicts,
+          stackCount: result.stackCount
+        }
+      });
+    }
+    res.json(result);
+  } catch (e) {
+    res.status(400).json({ ok: false, error: { code: 'bad_plan', message: e.message } });
+  }
+});
+
 // ---------- 折手自动寻路 ----------
 app.post('/api/find-path', (req, res) => {
   try {

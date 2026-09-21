@@ -429,6 +429,116 @@ function autoImpose(rows, cols, labels, steps, startPage, pageCount) {
 }
 
 /**
+ * 双面印刷版预览
+ * --------------
+ * 方案“全部步骤合法且收成单叠”后，按当前纸格标注生成两张印版：
+ *
+ *   - 正面版（第 1 印刷面）：纸格按原始行列位置排列；
+ *   - 背面版（第 2 印刷面）：纸格位置按所选翻转边镜像——
+ *       flip='long'  长边翻转（沿竖边左右翻，duplex 沿长边装订）：左右镜像；
+ *       flip='short' 短边翻转（沿横边上下翻，tumble）：上下镜像。
+ *
+ * 格内页码再依据该面片在折叠末态的朝向（frame.y）决定制版旋转：
+ *   - 正面字形初始沿世界 +y（向下）排版，末态 frame.y.y<0 即倒置，制版旋转 180°；
+ *   - 反面字形按印刷惯例排版（沿翻转边翻面后字头仍朝上）：
+ *       长边翻转 = 关于竖边翻面，反面字形初始沿 +y（与正面上下对齐），
+ *                  故同样 frame.y.y<0 时制版旋转 180°；
+ *       短边翻转 = 关于横边翻面（tumble），反面字形初始沿 -y（上下对调），
+ *                  故 frame.y.y>0 时制版旋转 180°。
+ * 无论哪种翻面方式，补偿后折叠阅读时各页码都正立，顺序与当前回放一致。
+ *
+ * 输出仅为只读预览，不改写 labels / steps。
+ */
+
+/** 双面版前置条件，与自动拼版相同：网格合法 + 全部折叠合法 + 收成单叠。 */
+function duplexEligibility(rows, cols, labels, steps) {
+  return impositionEligibility(rows, cols, labels, steps);
+}
+
+/**
+ * 构造双面印版。
+ * @param flip 'long'（长边翻转）| 'short'（短边翻转）
+ * @returns 成功
+ *   { ok:true, rows, cols, flip, flipAxis:'vertical'|'horizontal', capacity,
+ *     front: { face:'front', edge:'right'|'top', grid:[[cellView...] ].slice(rows) },
+ *     back:  { face:'back',  edge:'left'|'bottom', mirrored:true, grid:[[...]] } }
+ *   cellView = {
+ *     x, y,                 // 印版视图格位（0 基，列,行）
+ *     origin:'ox,oy',       // 对应的原始纸格
+ *     face:'front'|'back',  // 该格印的是哪一面
+ *     label:string|null,    // 页码（null = 空白面，保留占位）
+ *     blank:boolean,
+ *     rotate:0|180,         // 制版旋转角（°）
+ *     upright:boolean       // 折叠后按回放阅读是否正立（补偿后恒为 true）
+ *   }
+ * 失败透传 impositionEligibility 的 { ok:false, code, message, ... }。
+ */
+function buildDuplexPlates(rows, cols, labels, steps, flip) {
+  const elig = impositionEligibility(rows, cols, labels, steps);
+  if (!elig.ok) return elig;
+  if (flip !== 'long' && flip !== 'short') {
+    return {
+      ok: false,
+      code: 'bad_flip',
+      message: "翻面方式须为 'long'（长边翻转）或 'short'（短边翻转）。",
+      capacity: 2 * rows * cols
+    };
+  }
+
+  const panels = elig.state.panels;
+
+  // 某原格某面的制版旋转：frame.y 始终为 (0,±1,0)，y 分量决定倒置与否。
+  // 返回 { rotate, upright }（印刷补偿后 upright 恒为 true，即折叠后阅读正立）。
+  const plateCell = (id, face, vx, vy) => {
+    const p = panels[id];
+    const dy = p.frame.y.y;                 // 折叠末态自身“下”方向的世界 y 投影
+    let rotate180;
+    if (face === 'front') rotate180 = dy < 0;
+    else if (flip === 'long') rotate180 = dy < 0;   // 反面长边版：初始字形沿 +y
+    else rotate180 = dy > 0;                        // 反面短边版：初始字形沿 -y（tumble）
+    return {
+      x: vx, y: vy,
+      origin: id,
+      face,
+      label: p[face] === '' ? null : p[face],
+      blank: p[face] === '',
+      rotate: rotate180 ? 180 : 0,
+      upright: true
+    };
+  };
+
+  const buildGrid = (face) => {
+    const grid = [];
+    for (let vy = 0; vy < rows; vy++) {
+      const rowArr = [];
+      for (let vx = 0; vx < cols; vx++) {
+        // 正面版：视图格位 = 原格位；
+        // 背面版：沿翻转边镜像（关于中线翻转 180° 观察背面）
+        const ox = face === 'back' && flip === 'long' ? cols - 1 - vx : vx;
+        const oy = face === 'back' && flip === 'short' ? rows - 1 - vy : vy;
+        rowArr.push(plateCell(key(ox, oy), face, vx, vy));
+      }
+      grid.push(rowArr);
+    }
+    return grid;
+  };
+
+  return {
+    ok: true,
+    rows, cols, flip,
+    flipAxis: flip === 'long' ? 'vertical' : 'horizontal',
+    capacity: 2 * rows * cols,
+    front: { face: 'front', edge: flip === 'long' ? 'right' : 'top', grid: buildGrid('front') },
+    back: {
+      face: 'back',
+      edge: flip === 'long' ? 'left' : 'bottom',
+      mirrored: true,
+      grid: buildGrid('back')
+    }
+  };
+}
+
+/**
  * 汇总“现有标注 → 自动拼版结果”之间会被覆盖/清空的位置。
  * @returns [{ cell, face, from:string, to:string, blanked:boolean }]
  *   仅包含现有标注非空、且写入后内容发生变化的面。
@@ -717,6 +827,7 @@ const api = {
   initialState, cloneState, validateFold, applyFold,
   replay, visibleFace, pageSequence, normalizePlan, key,
   impositionEligibility, autoImpose, impositionOverwrite,
+  duplexEligibility, buildDuplexPlates,
   findFoldPath, candidateSteps, stateKey, describeStep
 };
 

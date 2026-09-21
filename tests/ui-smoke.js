@@ -13,7 +13,7 @@ function makeEl(id) {
   const listeners = {};
   const el = {
     id, hidden: false, value: '', textContent: '', innerHTML: '',
-    style: { cssText: '' }, className: '', disabled: false,
+    style: { cssText: '', setProperty() {} }, className: '', disabled: false,
     dataset: {}, files: [], max: '0',
     width: 0, height: 0,
     addEventListener(t, fn) { (listeners[t] = listeners[t] || []).push(fn); },
@@ -53,12 +53,18 @@ const ids = ['rowsInput', 'colsInput', 'createGridBtn', 'axisSelect', 'lineSelec
   'cellEditor', 'editorOrigin', 'editorRows', 'editorCancel', 'editorOk', 'planName',
   'imposeStart', 'imposeCount', 'imposePreviewBtn', 'imposeStatus', 'imposePreview',
   'imposeSummary', 'imposeOverwrite', 'imposeRows', 'imposeCancelBtn', 'imposeConfirmBtn',
-  'pathCell', 'pathFace', 'pathSearchBtn', 'pathStatus', 'pathResults'];
+  'pathCell', 'pathFace', 'pathSearchBtn', 'pathStatus', 'pathResults',
+  'duplexCard', 'duplexFlip', 'duplexOpenBtn', 'duplexStatus',
+  'duplexOverlay', 'duplexFlipOverlay', 'duplexScreenNote', 'duplexPrintBtn',
+  'duplexCloseBtn', 'plateFrontMeta', 'plateBackMeta', 'plateFrontSheet',
+  'plateBackSheet'];
 const els = Object.fromEntries(ids.map((id) => [id, makeEl(id)]));
 els.rowsInput.value = '2';
 els.colsInput.value = '2';
 els.planName.value = '冒烟方案';
 els.axisSelect.value = 'v';
+els.duplexFlip.value = 'long';
+els.duplexFlipOverlay.value = 'long';
 
 const foldBtns = ['l', 'r', 'u', 'd'].map((dir) => {
   const b = makeEl('fold-' + dir);
@@ -206,6 +212,80 @@ els.imposePreviewBtn.dispatch('click');
 ui.confirmImposition();   // 无现有标注，不弹确认框
 assert.deepEqual(FE.pageSequence(ui.replay.state).stacks[0].sequence,
   ['1', '2', '3', '4', '5', '6', '7', '8']);
+
+// ---------- 双面印刷版预览 ----------
+// 合法 2×2 折帖 + 已确认拼版标注：预览按钮可用
+els.rowsInput.value = '2'; els.colsInput.value = '2';
+els.createGridBtn.dispatch('click');
+ui.requestStep({ axis: 'v', line: 1, dir: 'r' });
+ui.requestStep({ axis: 'h', line: 1, dir: 'd' });
+assert.equal(els.duplexOpenBtn.disabled, false);
+
+// 长边版：正面不镜像、背面左右镜像；格位旋转与引擎朝向一致
+ui.openDuplex();
+assert.equal(els.duplexOverlay.hidden, false);
+let plate = ui.duplex.result;
+assert.equal(plate.flip, 'long');
+assert.equal(plate.front.grid[0][0].origin, '0,0');
+assert.equal(plate.back.grid[0][0].origin, '1,0');
+assert.equal(plate.back.grid[0][1].origin, '0,0');
+assert.equal(plate.back.grid[1][0].origin, '1,1');
+assert.equal(plate.front.edge, 'right');
+assert.equal(plate.back.edge, 'left');
+// frame.y.y<0 的格（如 0,0 / 1,0）正面版旋转 180°；0,1 / 1,1 不转
+assert.equal(plate.front.grid[0][0].rotate, 180);
+assert.equal(plate.front.grid[0][1].rotate, 180);
+assert.equal(plate.front.grid[1][0].rotate, 0);
+assert.equal(plate.front.grid[1][1].rotate, 0);
+assert.ok(plate.front.grid.flat().every((c) => c.face === 'front'));
+assert.ok(plate.back.grid.flat().every((c) => c.face === 'back'));
+// 长边反面版与正面版旋转规则相同
+assert.equal(plate.back.grid[0][0].rotate, 180);
+assert.equal(plate.back.grid[1][1].rotate, 0);
+
+// 切短边：改为上下镜像、翻面边变为横边
+els.duplexFlipOverlay.value = 'short';
+els.duplexFlipOverlay.dispatch('change', { target: els.duplexFlipOverlay });
+plate = ui.duplex.result;
+assert.equal(plate.flip, 'short');
+assert.equal(plate.back.grid[0][0].origin, '0,1');
+assert.equal(plate.back.grid[0][1].origin, '1,1');
+assert.equal(plate.back.grid[1][0].origin, '0,0');
+assert.equal(plate.back.grid[1][1].origin, '1,0');
+assert.equal(plate.front.edge, 'top');
+assert.equal(plate.back.edge, 'bottom');
+// 短边反面版旋转规则与长边相反：0,0 在长边为 180°，短边为 0°
+assert.equal(plate.back.grid[1][0].rotate, 0);
+assert.equal(plate.back.grid[0][1].rotate, 180);
+assert.equal(plate.front.grid[0][0].rotate, 180, '正面版旋转不随翻面方式变化');
+ui.closeDuplex();
+assert.equal(els.duplexOverlay.hidden, true);
+
+// 未收成单叠时禁用并说明原因
+els.rowsInput.value = '2'; els.colsInput.value = '3';
+els.createGridBtn.dispatch('click');
+ui.requestStep({ axis: 'v', line: 1, dir: 'r' });
+assert.equal(els.duplexOpenBtn.disabled, true);
+assert.ok(/尚未收成单叠/.test(els.duplexStatus.textContent));
+
+// 非法折叠时禁用并给出原因（厚度冲突）
+els.rowsInput.value = '1'; els.colsInput.value = '3';
+els.createGridBtn.dispatch('click');
+ui.plan.steps.push({ axis: 'v', line: 2, dir: 'l' });
+ui.renderDuplex();
+assert.equal(els.duplexOpenBtn.disabled, true);
+assert.ok(/禁用预览/.test(els.duplexStatus.textContent));
+
+// 打开预览后方案被改坏 → 自动关闭
+els.rowsInput.value = '2'; els.colsInput.value = '2';
+els.createGridBtn.dispatch('click');
+ui.requestStep({ axis: 'v', line: 1, dir: 'r' });
+ui.requestStep({ axis: 'h', line: 1, dir: 'd' });
+ui.openDuplex();
+assert.equal(els.duplexOverlay.hidden, false);
+ui.plan.steps.push({ axis: 'v', line: 1, dir: 'r' });
+ui.renderDuplex();
+assert.equal(els.duplexOverlay.hidden, true);
 
 // ---------- 折手自动寻路 ----------
 // 干净 2×2：寻路按钮可用，目标 (1,0) 反面 → 2 步最短，给出 ≤3 条等长方案

@@ -120,6 +120,23 @@
         <div id="foldState" class="hint"></div>
       </section>
 
+      <section class="card" id="duplexCard">
+        <h2>双面印刷版预览</h2>
+        <p class="hint">全部折叠合法并收成单叠后，按当前纸格标注并排生成<b>正面版 / 背面版</b>：
+          背面纸格按所选翻转边镜像，格内页码再按面片朝向旋转，打印后沿所选边翻面、
+          按既有步骤折叠时，阅读顺序与当前回放一致。</p>
+        <div class="row">
+          <label>翻面方式
+            <select id="duplexFlip">
+              <option value="long">长边翻转（沿竖边左右翻）</option>
+              <option value="short">短边翻转（沿横边上下翻）</option>
+            </select>
+          </label>
+          <button id="duplexOpenBtn" class="primary" disabled>生成双面版预览</button>
+        </div>
+        <div id="duplexStatus" class="hint"></div>
+      </section>
+
       <section class="card" id="pathfindCard">
         <h2>折手自动寻路</h2>
         <p class="hint">指定某个<b>原始纸格</b>的正面或反面作为最终朝上的封面，从当前方案的
@@ -175,6 +192,39 @@
       </section>
     </aside>
   </main>
+
+  <!-- 双面印刷版预览（打印时仅保留此处，正面版、背面版各占一页） -->
+  <div id="duplexOverlay" class="duplex-overlay" hidden>
+    <div class="duplex-screenbar no-print">
+      <b>双面印刷版预览</b>
+      <label>翻面方式
+        <select id="duplexFlipOverlay">
+          <option value="long">长边翻转（沿竖边左右翻）</option>
+          <option value="short">短边翻转（沿横边上下翻）</option>
+        </select>
+      </label>
+      <span id="duplexScreenNote" class="hint"></span>
+      <span class="duplex-bar-spacer"></span>
+      <button id="duplexPrintBtn" class="primary">打印 / 另存 PDF</button>
+      <button id="duplexCloseBtn">关闭预览</button>
+    </div>
+    <div id="duplexPrintArea" class="duplex-print-area">
+      <section class="plate-page" id="plateFrontPage">
+        <header class="plate-head">
+          <h3>正面版（第 1 印刷面）</h3>
+          <span class="plate-meta" id="plateFrontMeta"></span>
+        </header>
+        <div class="plate-sheet" id="plateFrontSheet"></div>
+      </section>
+      <section class="plate-page" id="plateBackPage">
+        <header class="plate-head">
+          <h3>背面版（第 2 印刷面）</h3>
+          <span class="plate-meta" id="plateBackMeta"></span>
+        </header>
+        <div class="plate-sheet" id="plateBackSheet"></div>
+      </section>
+    </div>
+  </div>
 
   <!-- 纸格页码编辑弹层 -->
   <div id="cellEditor" class="modal" hidden>

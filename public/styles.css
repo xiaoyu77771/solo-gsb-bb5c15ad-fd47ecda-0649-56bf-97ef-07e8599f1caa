@@ -241,6 +241,173 @@ button.fold { flex: 1 1 40%; min-width: 110px; font-weight: 600; }
 .path-step-list { margin: 0; padding-left: 20px; font-size: 12px; line-height: 1.7; color: var(--ink); }
 .path-step-list li { font-variant-numeric: tabular-nums; }
 
+/* ---------- 双面印刷版预览 ---------- */
+.duplex-status-err { color: var(--danger); }
+.duplex-status-ok { color: var(--ok); }
+
+.duplex-overlay {
+  position: fixed; inset: 0;
+  background: #eef1f5;
+  z-index: 40;
+  display: flex; flex-direction: column;
+}
+.duplex-overlay[hidden] { display: none; }
+.duplex-screenbar {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 16px;
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.duplex-bar-spacer { flex: 1; }
+.duplex-screenbar select { width: auto; }
+
+.duplex-print-area {
+  flex: 1; overflow: auto;
+  display: flex; gap: 18px;
+  padding: 16px;
+  align-items: flex-start;
+}
+
+/* 每一张印版为一页：屏幕上模拟 A4 横版纸卡 */
+.plate-page {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 18px 22px;
+  width: 760px;
+  max-width: calc(100vw - 64px);
+  flex: 0 0 auto;
+}
+.plate-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.plate-head h3 { margin: 0; color: #102a5c; font-size: 15px; }
+.plate-meta { color: var(--muted); font-size: 12px; }
+
+/* 纸格区：按原始行列铺格，用内边距尺寸保持方格 */
+.plate-sheet {
+  position: relative;
+  display: grid;
+  gap: 0;
+  width: 100%;
+  border: 2px solid #374151;
+}
+.plate-cell {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  min-width: 0;
+  border: 1px solid #9aa4b2;
+  padding: 4px 6px;
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+  background: #fff;
+}
+.plate-cell.face-front { background: #f3f7ff; }
+.plate-cell.face-back  { background: #f6f2fd; }
+.plate-cell.blank-cell { background:
+  repeating-linear-gradient(45deg, #f7f8fa 0 8px, #eef0f3 8px 16px); }
+
+.plate-cell .cell-origin {
+  position: absolute; left: 5px; top: 3px;
+  font-size: 11px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.plate-cell .cell-face {
+  position: absolute; right: 5px; top: 3px;
+  font-size: 11px; font-weight: 700;
+}
+.face-front .cell-face { color: var(--primary); }
+.face-back .cell-face { color: #7b4ed0; }
+.plate-cell .cell-rot {
+  position: absolute; right: 5px; bottom: 2px;
+  font-size: 11px; font-weight: 700;
+}
+.cell-rot.r0 { color: var(--muted); font-weight: 400; }
+.cell-rot.r180 { color: var(--danger); }
+
+.plate-cell .glyph {
+  font-size: clamp(18px, 3.4vw, 40px);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+  line-height: 1;
+}
+.plate-cell .glyph.blank { color: var(--muted); font-weight: 400; font-size: 14px; }
+/* 制版旋转 180°：仅字形本体旋转，标注文字保持可读 */
+.plate-cell .glyph.rot180 { transform: rotate(180deg); }
+
+/* 翻转边：彩条 + 文字（仅屏幕与打印版头标识，不影响格位） */
+.flip-edge {
+  margin-top: 10px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--ink);
+}
+.flip-edge .edge-bar {
+  width: 18px; height: 18px; border-radius: 3px;
+  background: repeating-linear-gradient(45deg, #2f6fed 0 5px, #1e54c4 5px 10px);
+  border: 1px solid #1e54c4;
+}
+.flip-edge .edge-bar.short-edge {
+  background: repeating-linear-gradient(45deg, #2e9e5b 0 5px, #1f7a45 5px 10px);
+  border-color: #1f7a45;
+}
+
 @media (max-width: 1100px) {
   .layout { grid-template-columns: 1fr; }
 }
+
+/* ---------- 打印样式：隐藏全部编辑控件，两张印版各占一页 ---------- */
+@media print {
+  @page { size: A4 landscape; margin: 8mm; }
+
+  body { background: #fff; }
+  .topbar, .layout, .modal { display: none !important; }
+
+  .duplex-overlay {
+    position: static;
+    background: #fff;
+    display: block;
+  }
+  .duplex-overlay[hidden] { display: block; }
+  .no-print { display: none !important; }
+
+  .duplex-print-area {
+    display: block;
+    padding: 0;
+    overflow: visible;
+  }
+  .plate-page {
+    display: block;
+    width: auto;
+    max-width: none;
+    height: calc(100vh - 16mm);   /* 单页内容高度，避免溢到第二页 */
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    page-break-after: always;
+    break-after: page;
+  }
+  .plate-page:last-child { page-break-after: auto; break-after: auto; }
+  .plate-head { margin-bottom: 2mm; }
+  .plate-sheet {
+    width: 100%;
+    flex: 1;
+    display: grid;
+    grid-template-rows: repeat(var(--plate-rows, 1), minmax(0, 1fr));
+  }
+  /* 打印时格内留白收紧，保证 12×12 网格也能放进一页；
+     取消方格纵横比，让格位铺满整张印版 */
+  .plate-cell { aspect-ratio: auto; padding: 1mm; }
+  .plate-cell .glyph { font-size: 24pt; }
+  .plate-cell .glyph.blank { font-size: 9pt; }
+  .plate-cell .cell-origin, .plate-cell .cell-face, .plate-cell .cell-rot {
+    font-size: 7pt;
+  }
+  .flip-edge { margin-top: 2mm; font-size: 8pt; }
+  .flip-edge .edge-bar { width: 4mm; height: 4mm; }
+}
+
